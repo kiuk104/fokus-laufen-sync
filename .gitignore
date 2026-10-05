@@ -1,0 +1,7 @@
+# 개인 값 — 절대 공유 금지
+config.json
+.garmin_tokens/
+data/
+__pycache__/
+*.log
+.pytest_cache/
