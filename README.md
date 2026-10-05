@@ -8,8 +8,9 @@ PC가 있으면 매일 아침 **달리기 기록(원본 FIT)과 수면·HRV·안
 
 ## 처음 한 번 (10분)
 
+0. **먼저 앱 가입** — 휴대폰으로 https://fokus-laufen.web.app 열기 → Google 로그인 → 동의 → 브라우저 메뉴의 **홈 화면에 추가**. (이미 쓰고 있으면 건너뛰기) PC 동기화는 선택이에요. PC가 없으면 앱만으로도 쓸 수 있어요.
 1. **Python 설치** — https://www.python.org/downloads/ → Download → 설치 첫 화면에서 **"Add python.exe to PATH" 체크** → Install Now
-2. **이 프로그램 받기** — 이 페이지의 **Releases** → `fokus-laufen-sync-x.y.z.zip` 받아서 원하는 폴더에 압축 풀기 (예: `C:\FokusLaufen`)
+2. **이 프로그램 받기** — 이 페이지 오른쪽의 **Releases** (또는 https://github.com/kiuk104/fokus-laufen-sync/releases/latest) → `fokus-laufen-sync-x.y.z.zip` 받아서 원하는 폴더에 압축 풀기 (예: `C:\FokusLaufen`). 초록색 **Code** 버튼은 개발자용이라 누르지 않아도 돼요. GitHub 계정도 필요 없어요
 3. **동기화 키 만들기** — 휴대폰 앱 **내 정보 → PC 동기화 → 키 만들기** → **복사**. 키는 이때 한 번만 보여요. PC로 옮길 땐 나에게 카톡/메일 보내기 등으로
 4. **`setup.bat` 더블클릭**
    - 필요한 프로그램 설치 → 동기화 키 붙여 넣기 → 가민 이메일·비밀번호 입력(비밀번호는 화면에 안 보이는 게 정상) → 2단계 인증을 쓰면 코드 입력
