@@ -59,12 +59,19 @@ Name: "{autodesktop}\Fokus Laufen"; Filename: "{app}\FokusLaufen.exe"; AppUserMo
 
 [Run]
 Filename: "{app}\FokusLaufen.exe"; Description: "Fokus Laufen 열기 (설정 시작)"; Flags: nowait postinstall skipifsilent
+; 프로그램 창의 '지금 업데이트'로 조용히 설치했을 때(/relaunch=1) 창을 다시 엶. 자동 실행(--auto)의 업데이트는 다시 열지 않음
+Filename: "{app}\FokusLaufen.exe"; Flags: nowait; Check: RelaunchRequested
 
 [UninstallRun]
 ; 자동 실행(작업 스케줄러) 지우기
 Filename: "{app}\FokusLaufen.exe"; Parameters: "--unregister"; Flags: runhidden waituntilterminated; RunOnceId: "unregister"
 
 [Code]
+function RelaunchRequested: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:relaunch|0}') = '1');
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Dir: String;

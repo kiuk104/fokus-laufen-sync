@@ -13,6 +13,7 @@ Fokus Laufen PC 동기화 — 창 프로그램 (설치판 FokusLaufen.exe)
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
@@ -21,7 +22,8 @@ import tempfile
 import threading
 import time
 import traceback
-from datetime import datetime
+import urllib.request
+from datetime import date, datetime
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -286,11 +288,110 @@ def open_path(p: Path) -> None:
         subprocess.Popen(["xdg-open", str(p)])
 
 
+# ── 업데이트 (설치판만) ──────────────────────────────────
+REPO = "kiuk104/fokus-laufen-sync"
+SETUP_NAME = "FokusLaufen-Setup.exe"
+DETACHED = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: 이 프로그램이 끝나도 설치는 계속
+
+
+def _ver(v: str) -> tuple:
+    try:
+        return tuple(int(x) for x in v.strip().lstrip("vV").split("."))
+    except ValueError:
+        return (0,)
+
+
+def check_update() -> dict | None:
+    """GitHub 최신 릴리스가 지금보다 새것이면 {"version", "url", "size"}. 없거나 확인 실패면 None"""
+    req = urllib.request.Request(f"https://api.github.com/repos/{REPO}/releases/latest",
+                                 headers={"Accept": "application/vnd.github+json",
+                                          "User-Agent": f"fokus-sync/{fs.VERSION}"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            rel = json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return None
+    v = (rel.get("tag_name") or "").lstrip("vV")
+    if rel.get("draft") or rel.get("prerelease") or _ver(v) <= _ver(fs.VERSION):
+        return None
+    for a in rel.get("assets") or []:
+        if a.get("name") == SETUP_NAME:
+            return {"version": v, "url": a["browser_download_url"], "size": a.get("size") or 0}
+    return None
+
+
+def download_update(u: dict, progress=None) -> Path:
+    """설치 파일을 임시 폴더에 받음. 크기가 릴리스 정보와 다르면 실패"""
+    dst = Path(tempfile.gettempdir()) / f"FokusLaufen-Setup-{u['version']}.exe"
+    req = urllib.request.Request(u["url"], headers={"User-Agent": f"fokus-sync/{fs.VERSION}"})
+    got = 0
+    with urllib.request.urlopen(req, timeout=60) as r, open(dst, "wb") as f:
+        total = int(r.headers.get("Content-Length") or u.get("size") or 0)
+        while chunk := r.read(256 * 1024):
+            f.write(chunk)
+            got += len(chunk)
+            if progress and total:
+                progress(got, total)
+    if got < 1_000_000 or (u.get("size") and got != u["size"]):
+        dst.unlink(missing_ok=True)
+        raise SystemExit("[업데이트 실패] 설치 파일을 끝까지 받지 못했어요.")
+    return dst
+
+
+def launch_installer(path: Path, relaunch: bool) -> None:
+    """조용히 설치 (관리자 권한 필요 없음). relaunch=True 면 설치 뒤 창을 다시 엶 (installer 의 /relaunch=1)"""
+    args = [str(path), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/NOCANCEL"]
+    if relaunch:
+        args.append("/relaunch=1")
+    subprocess.Popen(args, creationflags=DETACHED | NO_WINDOW, close_fds=True)
+    st = fs._state()
+    st["pendingUpdate"] = path.stem.rsplit("-", 1)[-1]
+    fs._save_state(st)
+
+
+def updated_notice() -> str | None:
+    """방금 업데이트됐으면 그 버전 (한 번만)"""
+    st = fs._state()
+    if st.get("pendingUpdate") and _ver(st["pendingUpdate"]) <= _ver(fs.VERSION):
+        st.pop("pendingUpdate")
+        fs._save_state(st)
+        return fs.VERSION
+    return None
+
+
+def auto_update() -> bool:
+    """자동 실행 끝에 하루 한 번: 새 버전이 있으면 받아서 조용히 설치. 설치를 시작했으면 True"""
+    if not (FROZEN and IS_WIN):
+        return False
+    st = fs._state()
+    today = date.today().isoformat()
+    if st.get("lastUpdateCheck") == today:
+        return False
+    st["lastUpdateCheck"] = today
+    fs._save_state(st)
+    u = check_update()
+    if not u:
+        return False
+    try:
+        print(f"[업데이트] {fs.VERSION} → {u['version']} 받는 중...")
+        path = download_update(u)
+        launch_installer(path, relaunch=False)
+        print(f"[업데이트] {u['version']} 설치를 시작했어요.")
+        return True
+    except BaseException as e:
+        print(f"[업데이트 실패] {e} (내일 다시 시도)")
+        return False
+
+
 # ── 창 없이 자동 실행 ───────────────────────────────────
 def auto_main() -> None:
     sys.stdout = sys.stderr = LogSink()
     trim_log()
+    v = updated_notice()
+    if v:
+        notify(f"Fokus Laufen PC 동기화를 {v} 로 업데이트했어요", "따로 할 일은 없어요.")
     if not fs.load_config().get("syncKey"):
+        auto_update()
         return
     kind, res = run_and_record(auto=True)
     cfg = fs.load_config()
@@ -303,6 +404,8 @@ def auto_main() -> None:
         notify("동기화 키를 다시 등록해 주세요", "앱에서 새 키를 만든 뒤, 시작 메뉴 → Fokus Laufen → '동기화 키 바꾸기'.")
     elif kind == "fail":
         notify("오늘 가민 동기화를 못 했어요", f"{res}\n다음 자동 실행 때 다시 시도해요.")
+    if kind != "busy":
+        auto_update()  # 동기화가 끝난 뒤에 (설치 중 파일 교체와 겹치지 않게)
 
 
 # ── 설정·상태 창 ────────────────────────────────────────

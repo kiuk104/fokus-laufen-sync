@@ -22,6 +22,7 @@ PC가 있으면 매일 아침 **달리기 기록(원본 FIT)과 수면·HRV·안
 
 - **아무것도 안 해도 돼요.** 평소에는 아무 창도 떠 있지 않아요. PC에 로그인하고 3분 뒤(또는 PC가 켜져 있으면 매일 오전 9시) **하루 한 번** 조용히 받고 올린 뒤, 화면 오른쪽 아래에 **"가민 기록을 앱에 올렸어요"** 알림만 떠요.
 - 지금 바로 올리고 싶거나 상태를 보고 싶으면 **시작 메뉴 → Fokus Laufen** → **지금 동기화**
+- **업데이트도 자동이에요.** 새 버전이 나오면 자동 실행 때 조용히 받아 설치하고 "업데이트했어요" 알림이 떠요. 창을 열었을 때 새 버전이 있으면 **지금 업데이트** 버튼도 보여요. (2.0.0 을 설치했다면 2.0.1 은 한 번만 직접 받아 설치해 주세요)
 - 가민이 오늘 수면·HRV를 갖고 있으려면 시계가 휴대폰 가민 앱과 먼저 동기화돼 있어야 해요. 아침에 휴대폰을 한 번 연 다음 PC를 켜면 가장 확실해요.
 
 ## 이럴 땐
@@ -58,5 +59,6 @@ PC가 있으면 매일 아침 **달리기 기록(원본 FIT)과 수면·HRV·안
 | `setup.bat` · `sync_today.bat` · `register_task.ps1` | 예전(1.x) 명령 창 방식. Python 이 있는 개발자용으로 남겨 둠 |
 
 - 창 프로그램을 스크립트로 띄우기: `pip install -r requirements.txt` → `python fokus_app.py` (저장 위치는 이 폴더, `FOKUS_LAUFEN_HOME` 으로 바꿀 수 있음)
+- 자동 업데이트: 설치판이 하루 한 번 GitHub API `releases/latest` 를 보고, 태그가 `VERSION` 보다 크고 `FokusLaufen-Setup.exe` 가 붙어 있으면 받아서 `/VERYSILENT` 로 설치 (draft·prerelease 는 무시 — 시험판은 prerelease 로 올리면 사용자에게 안 감)
 - 새 버전 배포: `fokus_sync.py` 의 `VERSION` 올림 → 커밋 → `git tag v2.0.1` → `git push --tags` → Actions 가 끝나면 Releases 에 `FokusLaufen-Setup.exe`
 - 테스트: `python -m pytest -q tests`

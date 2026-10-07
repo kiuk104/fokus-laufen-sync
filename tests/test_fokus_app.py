@@ -55,3 +55,59 @@ def test_task_xml_is_valid_and_runs_auto():
     doc = xml.dom.minidom.parseString(x.replace('encoding="UTF-16"', ""))
     assert doc.getElementsByTagName("Arguments")[0].firstChild.data.endswith("--auto")
     assert doc.getElementsByTagName("Delay")[0].firstChild.data == "PT3M"
+
+
+class _Resp:
+    def __init__(self, body: bytes):
+        self.body = body
+
+    def read(self):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        pass
+
+
+def _release(monkeypatch, tag, assets=("FokusLaufen-Setup.exe",), **extra):
+    import json
+    rel = {"tag_name": tag, "assets": [{"name": n, "browser_download_url": f"https://x/{n}", "size": 5_000_000}
+                                       for n in assets], **extra}
+    monkeypatch.setattr(fa.urllib.request, "urlopen", lambda req, timeout=0: _Resp(json.dumps(rel).encode()))
+
+
+def test_check_update_only_newer(monkeypatch):
+    monkeypatch.setattr(fs, "VERSION", "2.0.1")
+    _release(monkeypatch, "v2.0.10")
+    assert fa.check_update()["version"] == "2.0.10"  # 숫자로 비교 (2.0.10 > 2.0.9)
+    _release(monkeypatch, "v2.0.1")
+    assert fa.check_update() is None
+    _release(monkeypatch, "v1.9.9")
+    assert fa.check_update() is None
+    _release(monkeypatch, "v3.0.0", assets=("other.zip",))
+    assert fa.check_update() is None  # 설치 파일 없는 릴리스
+    _release(monkeypatch, "v3.0.0", prerelease=True)
+    assert fa.check_update() is None
+
+
+def test_check_update_offline_is_none(monkeypatch):
+    def fail(*a, **k):
+        raise OSError("offline")
+    monkeypatch.setattr(fa.urllib.request, "urlopen", fail)
+    assert fa.check_update() is None
+
+
+def test_updated_notice_once(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    monkeypatch.setattr(fs, "VERSION", "2.0.2")
+    fs._save_state({"pendingUpdate": "2.0.2"})
+    assert fa.updated_notice() == "2.0.2"
+    assert fa.updated_notice() is None
+
+
+def test_auto_update_skips_when_not_installed(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    monkeypatch.setattr(fa, "FROZEN", False)
+    assert fa.auto_update() is False

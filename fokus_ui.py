@@ -46,6 +46,7 @@ class MainWindow(tk.Tk):
         self.syncing = False
         self.hide_after_sync = False
         self.phase = ""
+        self.update_info: dict | None = None
         self.view = ""
         self.refs: dict = {}
         sys.stdout = sys.stderr = fa.LogSink(on_line=lambda line: self.q.put(("log", line)))
@@ -68,6 +69,11 @@ class MainWindow(tk.Tk):
         self.after(100, self._pump)
         self.after(20_000, self._tick)
         self.start_view()
+        just = fa.updated_notice()
+        if just:
+            self.after(500, lambda: messagebox.showinfo("업데이트", f"{just} 버전으로 업데이트했어요.", parent=self))
+        if fa.FROZEN or fa.os.environ.get("FOKUS_TEST_UPDATE"):
+            self.bg(fa.check_update, self._got_update)
 
     # ── 공통 ──────────────────────────────────────────
     def _set_icon(self):
@@ -453,9 +459,56 @@ class MainWindow(tk.Tk):
             self.start_sync(days=days.get() if first else None)
         self.primary(btns, "첫 동기화 시작" if first else "완료하고 지금 동기화", go).pack(side="right")
 
+    # ── 업데이트 ──────────────────────────────────────
+    def _got_update(self, u):
+        if isinstance(u, dict):
+            self.update_info = u
+            self.render_update()
+
+    def render_update(self):
+        slot = self.refs.get("update_slot")
+        u = self.update_info
+        if not u or slot is None or not slot.winfo_exists():
+            return
+        for w in slot.winfo_children():
+            w.destroy()
+        box = tk.Frame(slot, bg="#fff7e6", highlightthickness=1, highlightbackground="#f5d9a8")
+        box.pack(fill="x", pady=(0, 12))
+        inner = tk.Frame(box, bg="#fff7e6")
+        inner.pack(fill="x", padx=14, pady=10)
+        msg = tk.Label(inner, text=f"새 버전 {u['version']} 이 나왔어요  (지금 {fs.VERSION})", font=F(10, True),
+                       fg=INK, bg="#fff7e6", anchor="w")
+        msg.pack(side="left", fill="x", expand=True)
+        btn = self.primary(inner, "지금 업데이트", lambda: go())
+        btn.pack(side="right")
+        if self.syncing:
+            self.enable(btn, False)
+
+        def go():
+            if self.syncing:
+                return
+            self.enable(btn, False)
+            msg.configure(text="설치 파일 받는 중…")
+
+            def prog(got, total):
+                self.ui(lambda: msg.winfo_exists() and msg.configure(text=f"설치 파일 받는 중… {got * 100 // total}%"))
+
+            def done(r):
+                if isinstance(r, BaseException):
+                    msg.configure(text=str(r) or "업데이트하지 못했어요.")
+                    self.enable(btn, True)
+                    return
+                msg.configure(text="설치하는 중… 잠시 뒤 창이 다시 열려요")
+                self.update_idletasks()
+                fa.launch_installer(r, relaunch=True)
+                self.after(800, self.destroy)
+            self.bg(lambda: fa.download_update(u, prog), done)
+
     # ── 홈 ────────────────────────────────────────────
     def show_home(self):
         self.clear("home")
+        self.refs["update_slot"] = tk.Frame(self.body, bg=WHITE)
+        self.refs["update_slot"].pack(fill="x")
         c = self.card()
         top = tk.Frame(c, bg=SOFT)
         top.pack(fill="x")
@@ -539,6 +592,7 @@ class MainWindow(tk.Tk):
         r = self.refs
         if self.view != "home" or "title" not in r:
             return
+        self.render_update()
         st = fs._state()
         err = st.get("lastError")
         last = st.get("lastSuccess")
