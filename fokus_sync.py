@@ -1,4 +1,4 @@
-"""
+r"""
 Fokus Laufen PC 동기화 (회원용)
 
 가민 Connect 에서 내 달리기 원본(FIT)과 일별 수면·HRV·안정시 심박을 받아
@@ -9,7 +9,11 @@ Fokus Laufen 앱에 올립니다. 앱 서버에는 '동기화 키'로 내 폴더
     python fokus_sync.py run --auto     자동 실행용: 오늘 이미 성공했으면 건너뜀
     python fokus_sync.py run --days 120 처음에 더 긴 기간 받기 (기본: 첫 실행 90일, 이후 마지막 실행 이후)
 
-이 폴더에만 저장되는 것 (깃허브에 올라가지 않음, .gitignore):
+일반 사용자는 설치 파일(FokusLaufen-Setup.exe)의 트레이 앱(fokus_app.py)을 씁니다.
+그때 저장 위치는 %LOCALAPPDATA%\FokusLaufen, 스크립트로 실행하면 이 폴더입니다
+(환경 변수 FOKUS_LAUFEN_HOME 으로 바꿀 수 있음).
+
+저장되는 것 (깃허브에 올라가지 않음, .gitignore):
     config.json      동기화 키
     .garmin_tokens/  가민 로그인 토큰 (비밀번호는 저장하지 않음)
     data/            받은 파일, 업로드 기록
@@ -22,6 +26,7 @@ import argparse
 import hashlib
 import io
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -31,8 +36,19 @@ from datetime import date, datetime, timedelta
 from getpass import getpass
 from pathlib import Path
 
-VERSION = "1.0.0"
-HERE = Path(__file__).resolve().parent
+VERSION = "2.0.0"
+
+
+def _home() -> Path:
+    """설정·토큰·받은 파일 위치. 설치판(.exe)은 Program Files 가 아니라 사용자 폴더에 저장"""
+    if os.environ.get("FOKUS_LAUFEN_HOME"):
+        return Path(os.environ["FOKUS_LAUFEN_HOME"])
+    if getattr(sys, "frozen", False):
+        return Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "FokusLaufen"
+    return Path(__file__).resolve().parent
+
+
+HERE = _home()
 CONFIG = HERE / "config.json"
 TOKENS = HERE / ".garmin_tokens"
 DATA = HERE / "data"
@@ -49,7 +65,7 @@ DAILY = {  # 서버가 쓰는 것만 (wellness_core 의 sync 형식)
     "hrv": lambda api, d: api.get_hrv_data(d),
 }
 
-if hasattr(sys.stdout, "reconfigure"):
+if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 
@@ -62,6 +78,7 @@ def load_config() -> dict:
 
 
 def save_config(c: dict) -> None:
+    CONFIG.parent.mkdir(parents=True, exist_ok=True)
     CONFIG.write_text(json.dumps(c, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
@@ -73,8 +90,16 @@ def _state() -> dict:
 
 
 def _save_state(s: dict) -> None:
-    DATA.mkdir(exist_ok=True)
+    DATA.mkdir(parents=True, exist_ok=True)
     (DATA / ".state.json").write_text(json.dumps(s, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+class NeedLogin(SystemExit):
+    """저장된 가민 로그인이 없거나 만료됨 — 사용자가 다시 로그인해야 함"""
+
+
+class BadKey(SystemExit):
+    """동기화 키가 없거나 막힘 — 앱에서 새 키를 받아야 함"""
 
 
 # ── 앱 서버 (pc_sync) ──────────────────────────────────
@@ -92,6 +117,8 @@ def api_call(cfg: dict, action: str, *, body: bytes | None = None, extra: str = 
             msg = json.loads(e.read().decode("utf-8")).get("error")
         except Exception:
             msg = None
+        if e.code in (401, 403):
+            raise BadKey(f"[동기화 키 오류] {msg or '키가 올바르지 않거나 막혔어요'}. 앱 → 내 정보 → PC 동기화에서 새 키를 만들어 주세요.")
         raise SystemExit(f"[앱 서버 오류 {e.code}] {msg or e.reason}")
     except urllib.error.URLError as e:
         raise SystemExit(f"[연결 실패] 인터넷 연결을 확인하세요: {e.reason}")
@@ -99,6 +126,7 @@ def api_call(cfg: dict, action: str, *, body: bytes | None = None, extra: str = 
 
 # ── 가민 ───────────────────────────────────────────────
 def garmin_login(interactive: bool):
+    """저장된 토큰으로 로그인. 없거나 만료되면 interactive 일 때만 명령 창에서 물어봄"""
     from garminconnect import Garmin
     if TOKENS.exists():
         api = Garmin()
@@ -108,11 +136,26 @@ def garmin_login(interactive: bool):
         except Exception as e:
             print(f"저장된 가민 로그인이 만료됐어요: {e}")
     if not interactive:
-        raise SystemExit("[가민 로그인 필요] setup.bat 을 다시 실행해서 가민에 로그인해 주세요.")
+        raise NeedLogin("[가민 로그인 필요] 가민에 다시 로그인해 주세요.")
     email = input("가민 이메일: ").strip()
     pw = getpass("가민 비밀번호 (입력해도 화면에 안 보여요): ")
-    api = Garmin(email, pw, prompt_mfa=lambda: input("2단계 인증 코드: ").strip())
-    api.login(str(TOKENS))
+    return garmin_login_with(email, pw, lambda: input("2단계 인증 코드: ").strip())
+
+
+def garmin_login_with(email: str, password: str, prompt_mfa):
+    """이메일·비밀번호로 새로 로그인하고 토큰만 저장 (비밀번호는 저장하지 않음)"""
+    from garminconnect import Garmin
+    TOKENS.parent.mkdir(parents=True, exist_ok=True)
+    api = Garmin(email, password, prompt_mfa=prompt_mfa)
+    try:
+        api.login(str(TOKENS))
+    except Exception as e:
+        t = str(e)
+        if "401" in t or "403" in t or "nauthorized" in t or "credentials" in t.lower():
+            raise SystemExit("[가민 로그인 실패] 이메일이나 비밀번호가 맞지 않아요.")
+        if "429" in t or "Too Many" in t:
+            raise SystemExit("[가민 로그인 실패] 가민이 잠시 로그인을 막았어요. 1시간쯤 뒤에 다시 해 주세요.")
+        raise SystemExit(f"[가민 로그인 실패] {t}")
     print("가민 로그인 성공. 다음부터는 비밀번호 없이 실행돼요.")
     return api
 
@@ -218,7 +261,7 @@ def build_zip(batch) -> bytes:
     return buf.getvalue()
 
 
-def upload(cfg: dict) -> bool:
+def upload(cfg: dict, totals: dict | None = None) -> bool:
     log_p = DATA / ".upload_log.json"
     try:
         log = json.loads(log_p.read_text(encoding="utf-8"))
@@ -245,6 +288,9 @@ def upload(cfg: dict) -> bool:
                 log[rel] = h
             log_p.write_text(json.dumps(log, indent=0, sort_keys=True), encoding="utf-8")
             print(f"  완료: 새 달리기 {st['added']}개, 중복 {st['duplicates']}개, 일별 {st['wellnessDays']}일, 실패 {st['failed']}개")
+            if totals is not None:
+                for k in ("added", "wellnessDays"):
+                    totals[k] = totals.get(k, 0) + (st.get(k) or 0)
         elif st and st.get("status") == "error":
             ok = False
             print(f"  서버 처리 실패: {st.get('error')} (다음 실행 때 다시 올려요)")
@@ -253,49 +299,77 @@ def upload(cfg: dict) -> bool:
     return ok
 
 
-# ── 명령 ───────────────────────────────────────────────
-def cmd_setup(args) -> None:
-    print(f"Fokus Laufen PC 동기화 {VERSION} — 처음 설정\n")
-    cfg = load_config()
-    print("1) 앱 → 내 정보 → PC 동기화 → '키 만들기' 에서 나온 키를 붙여 넣으세요 (fl_ 로 시작).")
-    key = input("   동기화 키: ").strip()
+# ── 공통 동작 (명령 창·트레이 앱이 같이 씀) ──────────────
+def verify_key(key: str) -> str:
+    """키를 확인하고 저장. 계정 이름을 돌려줌"""
+    key = key.strip()
     if not key.startswith("fl_"):
-        raise SystemExit("키는 fl_ 로 시작해요. 앱에서 복사한 그대로 붙여 넣어 주세요.")
+        raise BadKey("키는 fl_ 로 시작해요. 앱에서 복사한 그대로 붙여 넣어 주세요.")
+    cfg = load_config()
     cfg.update(syncKey=key, endpoint=cfg.get("endpoint") or DEFAULT_ENDPOINT)
     who = api_call(cfg, "whoami")
     save_config(cfg)
-    print(f"   확인됨: {who.get('name') or '내 계정'}\n")
+    return who.get("name") or "내 계정"
+
+
+def is_configured() -> bool:
+    return bool(load_config().get("syncKey")) and TOKENS.exists()
+
+
+def last_success() -> str | None:
+    return _state().get("lastSuccess")
+
+
+def run_sync(days: int | None = None, auto: bool = False, interactive: bool = False) -> dict:
+    """받고 올리기. 결과: {"skipped", "days", "fits", "added", "wellnessDays"}. 실패하면 SystemExit 계열"""
+    cfg = load_config()
+    if not cfg.get("syncKey"):
+        raise BadKey("[설정 필요] 동기화 키를 먼저 등록해 주세요.")
+    DATA.mkdir(parents=True, exist_ok=True)
+    today = date.today()
+    st = _state()
+    st["lastAttempt"] = datetime.now().isoformat(timespec="seconds")
+    _save_state(st)
+    if auto and st.get("lastSuccess") == today.isoformat():
+        print(f"[{datetime.now():%Y-%m-%d %H:%M}] 오늘은 이미 올렸어요. 건너뜁니다.")
+        return {"skipped": True}
+    if days:
+        start = today - timedelta(days=days - 1)
+    elif st.get("lastSuccess"):
+        start = date.fromisoformat(st["lastSuccess"]) - timedelta(days=OVERLAP_DAYS)
+    else:
+        start = today - timedelta(days=FIRST_RUN_DAYS - 1)
+    print(f"[{datetime.now():%Y-%m-%d %H:%M}] 가민에서 {start} ~ {today} 받는 중...")
+    api = garmin_login(interactive=interactive)
+    n_days, n_fit = fetch(api, start, today)
+    print(f"받기 끝: 일별 {n_days}일, 새 달리기 {n_fit}개")
+    totals: dict = {}
+    if not upload(cfg, totals):
+        raise SystemExit("[업로드 일부 실패] 다음 실행 때 다시 올려요.")
+    st = _state()
+    st["lastSuccess"] = today.isoformat()
+    st["lastResult"] = {"at": datetime.now().isoformat(timespec="seconds"), "fits": n_fit, **totals}
+    _save_state(st)
+    print("\n[완료] 앱에서 활동 탭과 오늘 탭을 새로고침하세요.")
+    return {"skipped": False, "days": n_days, "fits": n_fit, **totals}
+
+
+# ── 명령 ───────────────────────────────────────────────
+def cmd_setup(args) -> None:
+    print(f"Fokus Laufen PC 동기화 {VERSION} — 처음 설정\n")
+    print("1) 앱 → 내 정보 → PC 동기화 → '키 만들기' 에서 나온 키를 붙여 넣으세요 (fl_ 로 시작).")
+    name = verify_key(input("   동기화 키: "))
+    print(f"   확인됨: {name}\n")
     print("2) 가민 Connect 로그인 (이 PC 에만 로그인 토큰이 저장돼요)")
     garmin_login(interactive=True)
     print("\n설정 끝. 이제 sync_today.bat 을 실행하면 받고 올려요.")
 
 
 def cmd_run(args) -> None:
-    cfg = load_config()
-    if not cfg.get("syncKey"):
-        raise SystemExit("[설정 필요] setup.bat 을 먼저 실행해 주세요.")
-    DATA.mkdir(exist_ok=True)
-    today = date.today()
-    st = _state()
-    if args.auto and st.get("lastSuccess") == today.isoformat():
-        print(f"[{datetime.now():%Y-%m-%d %H:%M}] 오늘은 이미 올렸어요. 건너뜁니다.")
-        return
-    if args.days:
-        start = today - timedelta(days=args.days - 1)
-    elif st.get("lastSuccess"):
-        start = date.fromisoformat(st["lastSuccess"]) - timedelta(days=OVERLAP_DAYS)
-    else:
-        start = today - timedelta(days=FIRST_RUN_DAYS - 1)
-    print(f"[{datetime.now():%Y-%m-%d %H:%M}] 가민에서 {start} ~ {today} 받는 중...")
-    api = garmin_login(interactive=not args.auto)
-    n_days, n_fit = fetch(api, start, today)
-    print(f"받기 끝: 일별 {n_days}일, 새 달리기 {n_fit}개")
-    if upload(cfg):
-        st["lastSuccess"] = today.isoformat()
-        _save_state(st)
-        print("\n[완료] 앱에서 활동 탭과 오늘 탭을 새로고침하세요.")
-    else:
-        raise SystemExit(1)
+    try:
+        run_sync(days=args.days, auto=args.auto, interactive=not args.auto)
+    except NeedLogin as e:
+        raise SystemExit(f"{e} (setup.bat 을 다시 실행)")
 
 
 def main() -> None:

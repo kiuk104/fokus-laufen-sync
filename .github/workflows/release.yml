@@ -1,0 +1,87 @@
+name: Windows 설치 파일
+
+# 새 버전: fokus_sync.py 의 VERSION 올림 → 커밋 → git tag vX.Y.Z → git push --tags
+# → 이 작업이 FokusLaufen-Setup.exe 를 만들어 Releases 에 올림.
+# 앱의 다운로드 링크: https://github.com/kiuk104/fokus-laufen-sync/releases/latest/download/FokusLaufen-Setup.exe
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 패키지 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pytest
+
+      - name: 테스트
+        run: python -m pytest -q tests
+
+      - name: 버전 읽기
+        id: v
+        shell: bash
+        run: |
+          v=$(python -c "import fokus_sync; print(fokus_sync.VERSION)")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/* && "${GITHUB_REF_NAME#v}" != "$v" ]]; then
+            echo "::error::태그 $GITHUB_REF_NAME 와 fokus_sync.VERSION $v 가 달라요"; exit 1
+          fi
+
+      - name: exe 만들기 (PyInstaller)
+        run: pyinstaller --noconfirm --clean FokusLaufen.spec
+
+      - name: exe 실행 확인
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\FokusLaufen\FokusLaufen.exe -ArgumentList '--selftest' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Write-Error "selftest 실패 ($($p.ExitCode))"; exit 1 }
+
+      - name: 설치 파일 만들기 (Inno Setup)
+        shell: pwsh
+        env:
+          FL_VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\Languages\Korean.isl")) {
+            # 한국어 번역이 기본 설치에 없으면 공식 저장소에서 받기 (실패하면 영어로 만듦)
+            try {
+              Invoke-WebRequest -Uri "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Unofficial/Korean.isl" `
+                -OutFile "${env:ProgramFiles(x86)}\Inno Setup 6\Languages\Korean.isl"
+            } catch { Write-Warning "Korean.isl 없음 — 설치 화면 기본 문구는 영어" }
+          }
+          & $iscc installer\FokusLaufen.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git archive -o "dist\fokus-laufen-sync-${env:FL_VERSION}-scripts.zip" HEAD
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FokusLaufen-Setup
+          path: |
+            dist/FokusLaufen-Setup.exe
+            dist/fokus-laufen-sync-*-scripts.zip
+
+      - name: Releases 에 올리기
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Fokus Laufen PC 동기화 ${{ steps.v.outputs.version }}
+          body: |
+            **FokusLaufen-Setup.exe** 를 받아 더블클릭하세요. Python 설치는 필요 없어요.
+            Windows가 "PC 보호" 창을 띄우면 **추가 정보 → 실행**을 누르세요.
+            `scripts.zip` 은 개발자용(파이썬 스크립트)이에요.
+          files: |
+            dist/FokusLaufen-Setup.exe
+            dist/fokus-laufen-sync-*-scripts.zip
