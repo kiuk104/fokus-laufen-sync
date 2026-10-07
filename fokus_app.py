@@ -185,7 +185,7 @@ def task_xml() -> str:
     user = f"{os.environ.get('USERDOMAIN', '')}\\{os.environ.get('USERNAME', '')}".lstrip("\\")
     cmd, args = _auto_command()
     desc = ("Fokus Laufen: 가민 커넥트에서 최근 달리기·수면·HRV 를 받아 Fokus Laufen 앱에 올립니다 (하루 한 번, 창 없이). "
-            f"설정·끄기: 시작 메뉴 → Fokus Laufen. 기록: {LOG}")
+            f"설정·끄기: 시작 메뉴 → Fokus Laufen 동기화. 기록: {LOG}")
     return f"""<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -279,6 +279,35 @@ def unregister_task() -> None:
             _schtasks("/Delete", "/TN", TASK_NAME, "/F")
         except Exception:
             pass
+
+
+def find_web_app_shortcut() -> Path | None:
+    """PC 에 설치된 Fokus Laufen 웹앱(Chrome·Edge '앱으로 설치') 바로가기. 동기화 프로그램 바로가기는
+    이름이 'Fokus Laufen 동기화' 라서 겹치지 않음"""
+    if not IS_WIN:
+        return None
+    menu = Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs"
+    desk = Path(os.environ.get("USERPROFILE", "")) / "Desktop"
+    for found in (lambda: menu.rglob("Fokus Laufen.lnk"), lambda: desk.glob("Fokus Laufen.lnk")):
+        try:
+            for lnk in found():
+                return lnk
+        except OSError:
+            pass
+    return None
+
+
+def open_web_app() -> None:
+    """설치된 웹앱이 있으면 그 앱 창으로, 없으면 브라우저 새 탭으로"""
+    import webbrowser
+    lnk = find_web_app_shortcut()
+    if lnk:
+        try:
+            os.startfile(str(lnk))  # noqa: S606
+            return
+        except OSError:
+            pass
+    webbrowser.open(APP_URL)
 
 
 def open_path(p: Path) -> None:
@@ -399,9 +428,9 @@ def auto_main() -> None:
         if cfg.get("notifySuccess", True):
             notify("가민 기록을 앱에 올렸어요", summary(res) + " — 앱에서 새로고침하세요")
     elif kind == "login":
-        notify("가민 로그인이 필요해요", "시작 메뉴에서 Fokus Laufen 을 열고 '가민 다시 로그인'을 눌러 주세요.")
+        notify("가민 로그인이 필요해요", "시작 메뉴에서 'Fokus Laufen 동기화'를 열고 '가민 다시 로그인'을 눌러 주세요.")
     elif kind == "key":
-        notify("동기화 키를 다시 등록해 주세요", "앱에서 새 키를 만든 뒤, 시작 메뉴 → Fokus Laufen → '동기화 키 바꾸기'.")
+        notify("동기화 키를 다시 등록해 주세요", "앱에서 새 키를 만든 뒤, 시작 메뉴 → Fokus Laufen 동기화 → '동기화 키 바꾸기'.")
     elif kind == "fail":
         notify("오늘 가민 동기화를 못 했어요", f"{res}\n다음 자동 실행 때 다시 시도해요.")
     if kind != "busy":

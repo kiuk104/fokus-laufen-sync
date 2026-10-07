@@ -54,11 +54,11 @@ Type: filesandordirs; Name: "{app}\_internal"
 
 [Icons]
 ; AppUserModelID 가 있어야 Windows 알림에 "Fokus Laufen" 이름과 아이콘이 붙음 (fokus_app.AUMID 와 같아야 함)
-Name: "{autoprograms}\Fokus Laufen"; Filename: "{app}\FokusLaufen.exe"; AppUserModelID: "FokusLaufen.PCSync"; Comment: "가민 기록을 Fokus Laufen 앱으로 보내기"
-Name: "{autodesktop}\Fokus Laufen"; Filename: "{app}\FokusLaufen.exe"; AppUserModelID: "FokusLaufen.PCSync"; Tasks: desktopicon
+Name: "{autoprograms}\Fokus Laufen 동기화"; Filename: "{app}\FokusLaufen.exe"; AppUserModelID: "FokusLaufen.PCSync"; Comment: "가민 기록을 Fokus Laufen 앱으로 보내기"
+Name: "{autodesktop}\Fokus Laufen 동기화"; Filename: "{app}\FokusLaufen.exe"; AppUserModelID: "FokusLaufen.PCSync"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\FokusLaufen.exe"; Description: "Fokus Laufen 열기 (설정 시작)"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\FokusLaufen.exe"; Description: "Fokus Laufen 동기화 열기 (설정 시작)"; Flags: nowait postinstall skipifsilent
 ; 프로그램 창의 '지금 업데이트'로 조용히 설치했을 때(/relaunch=1) 창을 다시 엶. 자동 실행(--auto)의 업데이트는 다시 열지 않음
 Filename: "{app}\FokusLaufen.exe"; Flags: nowait; Check: RelaunchRequested
 
@@ -67,6 +67,34 @@ Filename: "{app}\FokusLaufen.exe"; Flags: nowait; Check: RelaunchRequested
 Filename: "{app}\FokusLaufen.exe"; Parameters: "--unregister"; Flags: runhidden waituntilterminated; RunOnceId: "unregister"
 
 [Code]
+// 2.0.0~2.0.1 은 바로가기 이름이 웹앱과 같은 "Fokus Laufen" 이어서 바탕화면의 웹앱 바로가기를 덮어쓸 수 있었음.
+// 그 이름의 바로가기 중 이 프로그램(FokusLaufen.exe)을 가리키는 것만 지움 (Chrome·Edge 웹앱 바로가기는 그대로)
+procedure RemoveOldShortcut(const Path: String);
+var
+  Shell, Lnk: Variant;
+  Target: String;
+begin
+  if not FileExists(Path) then
+    exit;
+  try
+    Shell := CreateOleObject('WScript.Shell');
+    Lnk := Shell.CreateShortcut(Path);
+    Target := Lnk.TargetPath;
+    if Pos('fokuslaufen.exe', Lowercase(Target)) > 0 then
+      DeleteFile(Path);
+  except
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssInstall then
+  begin
+    RemoveOldShortcut(ExpandConstant('{autoprograms}\Fokus Laufen.lnk'));
+    RemoveOldShortcut(ExpandConstant('{autodesktop}\Fokus Laufen.lnk'));
+  end;
+end;
+
 function RelaunchRequested: Boolean;
 begin
   Result := WizardSilent and (ExpandConstant('{param:relaunch|0}') = '1');

@@ -36,7 +36,7 @@ from datetime import date, datetime, timedelta
 from getpass import getpass
 from pathlib import Path
 
-VERSION = "2.0.1"
+VERSION = "2.0.2"
 
 
 def _home() -> Path:

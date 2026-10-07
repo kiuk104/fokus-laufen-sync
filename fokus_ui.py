@@ -108,7 +108,7 @@ class MainWindow(tk.Tk):
             pass
         t = tk.Frame(h, bg=fa.BRAND)
         t.pack(side="left", pady=12)
-        tk.Label(t, text="Fokus Laufen", font=F(15, True), fg=WHITE, bg=fa.BRAND).pack(anchor="w")
+        tk.Label(t, text="Fokus Laufen 동기화", font=F(15, True), fg=WHITE, bg=fa.BRAND).pack(anchor="w")
         tk.Label(t, text="가민 기록을 앱으로 자동으로 보내는 PC 프로그램", font=F(9), fg="#e6f6fd", bg=fa.BRAND).pack(anchor="w")
         tk.Label(h, text=f"v{fs.VERSION}", font=F(9), fg="#cdeefc", bg=fa.BRAND).pack(side="right", padx=16)
 
@@ -522,7 +522,7 @@ class MainWindow(tk.Tk):
         btns.pack(fill="x", pady=(12, 0))
         main_btn = self.primary(btns, "지금 동기화", lambda: self.start_sync())
         main_btn.pack(side="left")
-        ttk.Button(btns, text="앱 열기", command=lambda: webbrowser.open(fa.APP_URL)).pack(side="left", padx=8)
+        ttk.Button(btns, text="Fokus Laufen 앱 열기", command=fa.open_web_app).pack(side="left", padx=8)
         self.refs.update(dot=dot, title=title, sub=sub, prog=prog, main_btn=main_btn, card=c, btns=btns)
 
         # 자동 실행
